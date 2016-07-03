@@ -1,0 +1,141 @@
+<!doctype html>
+<html>
+<head>
+	<title>YouTube comment getter</title>
+	<style>
+		textarea {
+			display: block;
+			width: 100%;
+			height: 150px;
+			margin-top: 20px;
+		}
+	</style>
+</head>
+<body>
+	<span id="account">Not logged in</span> <button id="login" disabled>Login</button><br />
+	<input id="video-id" placeholder="Video ID" value="h0dXrlZ6CKM" /><button id="get-button">Get comments</button>
+	<textarea id="comment-data" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+	<script>
+var key = 'AIzaSyDQVRI-unkWzbjgzYg0u-SkTiuhBxeL044';
+var votes = {};
+
+var remainingRequests = 0;
+
+function checkFinished() {
+	if (remainingRequests > 0) return;
+	console.log('I think I\'m done (%i comments):', Object.keys(votes).length);
+	console.log(votes);
+	document.getElementById('comment-data').textContent = JSON.stringify(votes);
+}
+
+function noteItem(item) {
+	if(item['snippet']['totalReplyCount'] > 0) {
+		remainingRequests++;
+		var repliesUrl = 'https://www.googleapis.com/youtube/v3/comments?part=snippet&parentId=' + item['id'] + '&textFormat=plainText&maxResults=100&key=' + key;
+		var rxhr = new XMLHttpRequest();
+		rxhr.open('get', repliesUrl);
+		rxhr.addEventListener('load', function() {
+			remainingRequests--;
+			var obj = JSON.parse(rxhr.responseText);
+			if (obj['items']) {
+				obj['items'].forEach(function(item) {
+					noteItem(item);
+				});
+			}
+			console.log('sub %i', remainingRequests);
+			checkFinished();
+		});
+		rxhr.send();
+	}
+
+	var snippet = item['snippet']['topLevelComment'] ?
+		item['snippet']['topLevelComment']['snippet'] :
+		item['snippet'];
+
+	var entry = {
+		content: snippet['textDisplay'],
+		userId:  snippet['authorChannelId']['value']
+	};
+	votes[item['id']] = entry;
+}
+
+function loadComments(id, modStatus, pageToken) {
+	remainingRequests++;
+
+	var xhr = new XMLHttpRequest();
+	var url = 'https://www.googleapis.com/youtube/v3/commentThreads?part=snippet&videoId=' + id + '&moderationStatus=' + modStatus + '&textFormat=plainText&maxResults=100&key=' + key;
+	if (pageToken) {
+		url += '&pageToken=' + pageToken;
+	}
+	xhr.open('get', url);
+	if (token) xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+	xhr.addEventListener('load', function() {
+		remainingRequests--;
+		var obj = JSON.parse(xhr.responseText);
+		if (obj['error']) {
+			console.log('Error requesting - id: %s, modStatus: %s, pageToken: %s %O', id, modStatus, pageToken, obj);
+		} else {
+			obj['items'].forEach(function(item) {
+				//console.log(modStatus);
+				noteItem(item);
+			});
+
+			if(obj['nextPageToken']) {
+				loadComments(id, modStatus, obj['nextPageToken']);
+			}
+		}
+		console.log('main %i', remainingRequests);
+		checkFinished();
+	});
+	xhr.send();
+}
+
+var token = null;
+function doit() {
+	var loginButton = document.getElementById('login');
+	loginButton.removeAttribute('disabled');
+	loginButton.addEventListener('click', function() {
+		gapi.auth.init(function() {
+			window.setTimeout(function() {
+				gapi.auth.authorize({
+					client_id: '355803390090-c45q0jrtoiqu692em8mgo8f3upnndau2.apps.googleusercontent.com',
+					scope: [
+						'https://www.googleapis.com/auth/youtube',
+						'https://www.googleapis.com/auth/youtube.force-ssl',
+						'https://www.googleapis.com/auth/youtube.readonly',
+						'https://www.googleapis.com/auth/youtube.upload'
+					],
+					immediate: false
+				}, function(authResult) {
+					console.log('auth result: %O', authResult);
+					var infoXhr = new XMLHttpRequest();
+					infoXhr.open('get', 'https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true&key=' + key);
+					token = authResult['access_token'];
+					infoXhr.setRequestHeader('Authorization', 'Bearer ' + token);
+					infoXhr.addEventListener('load', function() {
+						var infoObj = JSON.parse(infoXhr.responseText);
+						var loginLabel = document.getElementById('account');
+						if (infoObj['items'].length > 0) {
+							loginLabel.textContent = infoObj['items'][0]['snippet']['title'];
+						} else {
+							loginLabel.textContent = 'Error';
+						}
+					});
+					infoXhr.send();
+				});
+			}, 1);
+		});
+	});
+	document.getElementById('get-button').addEventListener('click', function() {
+		var id = document.getElementById('video-id').value;
+
+		var modStatuses = ['published', 'heldForReview', 'likelySpam'];
+		modStatuses.forEach(function(modStatus) {
+			loadComments(id, modStatus, null);
+		});
+	});
+}
+	</script>
+	<script src="https://apis.google.com/js/client.js?onload=doit"></script>
+</body>
+</html>
